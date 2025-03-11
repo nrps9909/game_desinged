@@ -19,7 +19,7 @@ PImage groundTex;
 // WASD 鍵狀態
 boolean wPressed, aPressed, sPressed, dPressed;
 
-// 玩家與椅子距離多少才可坐下
+// 玩家與椅子互動範圍（以座位中心計算）
 float sitDistance = 80;
 
 // 碰撞檢測額外乘數（>1 擴大範圍）
@@ -57,11 +57,10 @@ void setup() {
   // 建立玩家
   player = new Player(new PVector(0, 0, 0));
   
-  // 放置同學 NPC：將同學放在第一張椅子上，並加上座位偏移（例如 40 單位高度）
+  // 放置同學 NPC：將同學放在第一張椅子的座位中心上
   if(chairs.size() > 0) {
     Chair targetChair = chairs.get(0);
-    // NPC 位置：以椅子位置為基準，加上適當偏移
-    PVector npcPos = PVector.add(targetChair.pos, new PVector(0, 40, 0));
+    PVector npcPos = targetChair.getSeatPosition();
     classmate = new NPC(npcPos, this);
   }
   
@@ -74,6 +73,9 @@ void setup() {
 void draw() {
   background(135, 206, 235);
   lights();
+  
+  // 畫出 XYZ 軸與比例尺
+  drawAxes();
   
   // 滑鼠視角控制
   float dx = mouseX - width/2;
@@ -124,19 +126,113 @@ void drawGround() {
   popMatrix();
 }
 
+// drawAxes()：繪製延伸至 ±5000 的 X、Y、Z 軸線與 tick 標尺，且正負端標示 -X, X, -Y, Y, -Z, Z
+void drawAxes() {
+  pushStyle();
+  pushMatrix();
+    strokeWeight(2);
+    int tickInterval = 500;
+    float tickLength = 40;  
+    float labelOffset = 60; // tick 標籤離 tick 線的偏移量
+
+    // X 軸（紅色）：從 -5000 到 5000
+    stroke(255, 0, 0);
+    line(-5000, 0, 0, 5000, 0, 0);
+    // X 軸 tick 標尺
+    for (int x = -5000; x <= 5000; x += tickInterval) {
+      // 將 tick 線繪製在 Y = -200（即較高的位置）
+      line(x, -200 - tickLength/2, 0, x, -200 + tickLength/2, 0);
+      // 標籤位置：在 tick 線上方，Y 取 -200 - tickLength/2 - labelOffset
+      PVector tickPos = new PVector(x, -200 - tickLength/2 - labelOffset, 0);
+      pushMatrix();
+        translate(tickPos.x, tickPos.y, tickPos.z);
+        // 使標籤面向玩家
+        PVector toCam = PVector.sub(player.pos, tickPos);
+        float angle = atan2(toCam.x, toCam.z);
+        rotateY(angle);
+        fill(255);
+        textSize(48);
+        textAlign(CENTER, CENTER);
+        if (x == 5000) {
+          text("X", 0, 0);
+        } else if (x == -5000) {
+          text("-X", 0, 0);
+        } else {
+          text(x, 0, 0);
+        }
+      popMatrix();
+    }
+    
+    // Y 軸（綠色）：我們調整 Y 軸，使正 Y 為上方，故將線從 (0,5000,0) 到 (0,-5000,0)
+    stroke(0, 255, 0);
+    line(0, 5000, 0, 0, -5000, 0);
+    // Y 軸 tick 標尺：迭代 y 從 5000 到 -5000 (間隔 tickInterval)
+    for (int y = 5000; y >= -5000; y -= tickInterval) {
+      // 畫 tick 線：水平方向，X 從 -tickLength/2 到 tickLength/2
+      line(-tickLength/2, y, 0, tickLength/2, y, 0);
+      // 標籤：位置放在 X = tickLength/2 + labelOffset
+      PVector tickPos = new PVector(tickLength/2 + labelOffset, y, 0);
+      pushMatrix();
+        translate(tickPos.x, tickPos.y, tickPos.z);
+        // 顯示標籤時，使用 -y (因為 y 越小越高)
+        fill(255);
+        textSize(48);
+        textAlign(CENTER, CENTER);
+        if (y == 5000) {
+          text("Y", 0, 0);
+        } else if (y == -5000) {
+          text("-Y", 0, 0);
+        } else {
+          text(-y, 0, 0);
+        }
+      popMatrix();
+    }
+    
+    // Z 軸（藍色）：從 -5000 到 5000
+    stroke(0, 0, 255);
+    line(0, 0, -5000, 0, 0, 5000);
+    // Z 軸 tick 標尺：沿 Y = -200 畫
+    for (int z = -5000; z <= 5000; z += tickInterval) {
+      line(0, -200 - tickLength/2, z, 0, -200 + tickLength/2, z);
+      PVector tickPos = new PVector(0, -200 - tickLength/2 - labelOffset, z);
+      pushMatrix();
+        translate(tickPos.x, tickPos.y, tickPos.z);
+        PVector toCam = PVector.sub(player.pos, tickPos);
+        float angle = atan2(toCam.x, toCam.z);
+        rotateY(angle);
+        fill(255);
+        textSize(48);
+        textAlign(CENTER, CENTER);
+        if (z == 5000) {
+          text("Z", 0, 0);
+        } else if (z == -5000) {
+          text("-Z", 0, 0);
+        } else {
+          text(z, 0, 0);
+        }
+      popMatrix();
+    }
+    
+  popMatrix();
+  popStyle();
+}
+
 void keyPressed() {
   if (key == 'w' || key == 'W') wPressed = true;
   if (key == 'a' || key == 'A') aPressed = true;
   if (key == 's' || key == 'S') sPressed = true;
   if (key == 'd' || key == 'D') dPressed = true;
   
-  // 若按空白鍵則跳躍（僅限非對話狀態下）
-  if (key == ' ' && (classmate == null || !classmate.isTalking)) {
+  // 修改空白鍵：若對話中則先結束對話，再執行跳躍
+  if (key == ' ') {
+    if (classmate != null && classmate.isTalking) {
+      classmate.endConversation();
+    }
     if (!player.isSeated) player.jump();
   }
   
   // 按 F 鍵：若玩家靠近 NPC（同學）則開始對話或進入下一段對話，
-  // 否則執行原本坐椅子的動作
+  // 否則執行坐下/起身的動作
   if (key == 'f' || key == 'F') {
     if (classmate != null && PVector.dist(player.pos, classmate.pos) < 150) {
       if (!classmate.isTalking) {
@@ -148,10 +244,11 @@ void keyPressed() {
       if (player.isSeated) {
         player.exitChair();
       } else {
+        // 以椅子座位中心作為判斷點，讓前面或左右皆可互動
         for (Chair chair : chairs) {
-          float d = PVector.dist(player.pos, chair.pos);
+          float d = PVector.dist(player.pos, chair.getSeatPosition());
           if (d < sitDistance) {
-            player.sitOnChair(chair.pos);
+            player.sitOnChair(chair);
             break;
           }
         }
@@ -282,12 +379,13 @@ class Player {
     }
   }
   
-  void sitOnChair(PVector chairPos) {
-    PVector offset = new PVector(0, 40, 80);
-    pos.set(PVector.add(chairPos, offset));
+  // 坐下時直接使用椅子提供的坐位位置，並同步調整視角（camYaw）以對齊椅子面向
+  void sitOnChair(Chair chair) {
+    pos.set(chair.getSeatPosition());
     vel.set(0, 0, 0);
     isSeated = true;
     onGround = true;
+    camYaw = chair.getFacingAngle();
   }
   
   void exitChair() {
@@ -296,7 +394,7 @@ class Player {
 }
 
 //---------------------------------------------------
-// Chair 類別（保持原有結構）
+// Chair 類別：新增互動點與座位偏移，並計算面向角度
 //---------------------------------------------------
 class Chair {
   PVector pos;
@@ -304,11 +402,20 @@ class Chair {
   float scale;
   float baseRotation = PI; // 模型初始需要旋轉的角度
   BVHNode bvh;
+  // 互動點偏移（本地座標）：可用來微調互動區域
+  PVector interactionOffsetLocal;
+  // 座位偏移（本地座標）：代表模型內的座位位置
+  PVector seatOffsetLocal;
   
   Chair(PVector pos, float rotation, float scale) {
     this.pos = pos.copy();
     this.rotation = rotation;
     this.scale = scale;
+    
+    // 設定互動偏移：例如 (-60, 0, 0) 表示互動點相對於模型原點向左偏 60 單位（可依需求調整）
+    interactionOffsetLocal = new PVector(-60, 0, 0);
+    // 設定座位偏移：例如 (0, 0, 80) 表示座位在模型局部 Z 正方向偏移 80 單位，再加上高度 40 單位
+    seatOffsetLocal = new PVector(0, 40, 80);
     
     // 建立轉換矩陣
     PMatrix3D mat = new PMatrix3D();
@@ -319,6 +426,27 @@ class Chair {
     // 從模型中提取三角形建立 BVH
     List<Triangle> tris = extractMeshTriangles(chairModel, mat);
     bvh = new BVHNode(tris);
+  }
+  
+  // 取得互動點：將本地偏移依椅子旋轉後加到椅子位置上
+  PVector getInteractionPoint() {
+    float offsetX = interactionOffsetLocal.x * cos(rotation) - interactionOffsetLocal.z * sin(rotation);
+    float offsetZ = interactionOffsetLocal.x * sin(rotation) + interactionOffsetLocal.z * cos(rotation);
+    return PVector.add(pos, new PVector(offsetX, interactionOffsetLocal.y, offsetZ));
+  }
+  
+  // 取得坐位位置：將座位偏移依照椅子旋轉後加到椅子位置上
+  PVector getSeatPosition() {
+    float offsetX = seatOffsetLocal.x * cos(rotation) - seatOffsetLocal.z * sin(rotation);
+    float offsetZ = seatOffsetLocal.x * sin(rotation) + seatOffsetLocal.z * cos(rotation);
+    return PVector.add(pos, new PVector(offsetX, seatOffsetLocal.y, offsetZ));
+  }
+  
+  // 取得椅子面向角度：根據座位偏移計算 XZ 平面的角度
+  float getFacingAngle() {
+    float offsetX = seatOffsetLocal.x * cos(rotation) - seatOffsetLocal.z * sin(rotation);
+    float offsetZ = seatOffsetLocal.x * sin(rotation) + seatOffsetLocal.z * cos(rotation);
+    return atan2(offsetX, offsetZ);
   }
   
   void draw() {
@@ -384,21 +512,22 @@ class NPC {
   
   // 畫出 NPC 與對話 UI
   void draw() {
-    // 畫出 NPC 代表（用球體表示）
-    pushMatrix();
-      translate(pos.x, pos.y - 40, pos.z);
-      fill(255, 200, 200);
-      noStroke();
-      sphere(30);
-    popMatrix();
-    
-    // 若正在對話，畫出對話介面
-    if (isTalking) {
-      drawDialogueUI();
-    }
+    pushStyle();
+      // 畫出 NPC 代表（用球體表示），將球放置在椅子上，所以使用 pos.y + 30
+      pushMatrix();
+        translate(pos.x - 20, pos.y - 100, pos.z -20);
+        fill(255, 200, 200);
+        noStroke();
+        sphere(30);
+      popMatrix();
+      
+      // 若正在對話，畫出對話介面
+      if (isTalking) {
+        drawDialogueUI();
+      }
+    popStyle();
   }
   
-  // 畫出螢幕底下的對話選項
   void drawDialogueUI() {
     fill(0, 150);
     rect(0, height - 100, width, 100);
