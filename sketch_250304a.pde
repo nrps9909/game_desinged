@@ -4,10 +4,12 @@ import processing.opengl.*;
 import processing.sound.*;
 import java.util.ArrayList;
 import java.util.List;
+import processing.data.JSONObject;
+import processing.data.JSONArray;
 
 Player player;
 ArrayList<Chair> chairs;
-NPC classmate;
+ArrayList<NPC> npcs;
 float camYaw = 0, camPitch = 2;
 float sensitivity = 0.003;
 Robot robot;
@@ -55,13 +57,40 @@ void setup() {
   }
   
   player = new Player(new PVector(100, 0, 100));
+  
+  npcs = new ArrayList<NPC>();
   if (chairs.size() > 0) {
-    classmate = new NPC(chairs.get(0).getSeatPosition(), this);
+    // 從 JSON 檔案讀取劇本
+    JSONObject script = loadJSONObject("script.json");
+    JSONArray npcArray = script.getJSONArray("npcs");
+    for (int i = 0; i < npcArray.size(); i++) {
+      JSONObject npcData = npcArray.getJSONObject(i);
+      String name = npcData.getString("name");
+      JSONArray dialogues = npcData.getJSONArray("dialogues");
+      DialogueNode tree = parseDialogueTree(dialogues.getJSONObject(0));
+      npcs.add(new NPC(chairs.get(i * 2).getSeatPosition(), this, name, tree));
+    }
   }
   
   noCursor();
   centerMouse();
   uiLayer = createGraphics(width, height, P2D);
+}
+
+DialogueNode parseDialogueTree(JSONObject nodeData) {
+  String text = nodeData.getString("text");
+  String voice = nodeData.hasKey("voice") ? nodeData.getString("voice") : null;
+  if (nodeData.hasKey("outcome")) {
+    return new DialogueNode(text, nodeData.getString("outcome"), voice);
+  } else if (nodeData.hasKey("options")) {
+    JSONArray options = nodeData.getJSONArray("options");
+    DialogueNode[] optionNodes = new DialogueNode[options.size()];
+    for (int i = 0; i < options.size(); i++) {
+      optionNodes[i] = parseDialogueTree(options.getJSONObject(i));
+    }
+    return new DialogueNode(text, optionNodes, voice);
+  }
+  return new DialogueNode(text, voice);
 }
 
 void draw() {
@@ -92,16 +121,19 @@ void draw() {
   for (Chair chair : chairs) {
     chair.draw();
   }
-  if (classmate != null) {
-    classmate.update();
-    classmate.drawNPC();
+  for (NPC npc : npcs) {
+    npc.update(player.pos);
+    npc.drawNPC();
   }
   popMatrix();
   
   uiLayer.beginDraw();
   uiLayer.clear();
-  if (classmate != null && classmate.isTalking) {
-    classmate.drawDialogueUI(uiLayer);
+  for (NPC npc : npcs) {
+    if (npc.isTalking) {
+      npc.drawDialogueUI(uiLayer);
+      break;
+    }
   }
   uiLayer.endDraw();
   image(uiLayer, 0, 0);
@@ -197,17 +229,18 @@ void keyPressed() {
   if (key == ' ' && !player.isSeated) player.jump();
   
   if (key == 'f' || key == 'F') {
-    if (classmate != null && PVector.dist(player.pos, classmate.pos) < 150) {
-      if (!classmate.isTalking) {
-        println("開始對話");
-        classmate.startConversation();
-      } else if (classmate.canProceed()) {
-        println("下一句對話");
-        classmate.nextDialogue();
-      } else {
-        println("等待 NPC 說完...");
+    for (NPC npc : npcs) {
+      if (PVector.dist(player.pos, npc.pos) < 150) {
+        if (!npc.isTalking) {
+          println("開始與 " + npc.name + " 對話");
+          npc.startConversation();
+        } else if (npc.canProceed() && !npc.showOptions && !npc.waitingForPlayerVoice) {
+          npc.nextDialogue();
+        }
+        break;
       }
-    } else if (player.isSeated) {
+    }
+    if (player.isSeated) {
       player.exitChair();
     } else {
       for (Chair chair : chairs) {
@@ -216,6 +249,13 @@ void keyPressed() {
           break;
         }
       }
+    }
+  }
+  
+  for (NPC npc : npcs) {
+    if (npc.isTalking && npc.showOptions && npc.canProceed() && !npc.waitingForPlayerVoice) {
+      if (key == '1') npc.chooseOption(0);
+      if (key == '2') npc.chooseOption(1);
     }
   }
 }
@@ -286,7 +326,6 @@ class Player {
       float maxPen = 0;
       PVector collisionNormal = new PVector(0, 0, 0);
       
-      // 檢查與椅子的碰撞
       for (Chair chair : chairs) {
         if (PVector.dist(pos, chair.pos) > 300) continue;
         if (chair.bvh != null) {
@@ -309,11 +348,10 @@ class Player {
         }
       }
       
-      // 檢查與 NPC 的碰撞
-      if (classmate != null) {
-        float npcRadius = 30; // NPC 的球形碰撞體半徑
+      for (NPC npc : npcs) {
+        float npcRadius = 30;
         float totalRadius = effectiveRadius + npcRadius;
-        PVector npcCenter = PVector.add(classmate.pos, new PVector(0, -50, 0)); // NPC 中心點
+        PVector npcCenter = PVector.add(npc.pos, new PVector(0, -50, 0));
         float distToNPC = PVector.dist(pos, npcCenter);
         if (distToNPC < totalRadius) {
           float penetration = totalRadius - distToNPC;
@@ -324,7 +362,6 @@ class Player {
         }
       }
       
-      // 碰撞響應
       if (maxPen > 0.1) {
         pos.add(PVector.mult(collisionNormal, maxPen));
         float vn = vel.dot(collisionNormal);
@@ -366,7 +403,6 @@ class Chair {
     this.pos = pos.copy();
     this.rotation = rotation;
     this.scale = scale;
-    
     if (chairModel != null) {
       PMatrix3D mat = new PMatrix3D();
       mat.translate(pos.x, pos.y, pos.z);
@@ -403,50 +439,124 @@ class Chair {
   }
 }
 
+class DialogueNode {
+  String text;
+  DialogueNode[] options;
+  String outcome;
+  String voiceFile;
+  
+  DialogueNode(String text, String voiceFile) {
+    this.text = text;
+    this.options = null;
+    this.outcome = null;
+    this.voiceFile = voiceFile;
+  }
+  
+  DialogueNode(String text, DialogueNode[] options, String voiceFile) {
+    this.text = text;
+    this.options = options;
+    this.outcome = null;
+    this.voiceFile = voiceFile;
+  }
+  
+  DialogueNode(String text, String outcome, String voiceFile) {
+    this.text = text;
+    this.options = null;
+    this.outcome = outcome;
+    this.voiceFile = voiceFile;
+  }
+}
+
 class NPC {
   PVector pos;
+  String name;
   boolean isTalking = false;
-  String[] dialogueOptions = {"哈囉，你的天如何？", "今天天氣非常好！", "師大圖書館我最喜歡！"};
-  int currentDialogue = 0;
+  DialogueNode currentNode;
+  DialogueNode dialogueTree;
   SoundFile voice;
+  SoundFile playerVoice;
   float talkStartTime = 0;
-  float talkDuration = 2.0;
+  float talkDuration = 0;
+  boolean showOptions = false;
+  boolean waitingForPlayerVoice = false;
   
-  NPC(PVector pos, PApplet parent) {
+  NPC(PVector pos, PApplet parent, String name, DialogueNode dialogueTree) {
     this.pos = pos.copy();
-    try {
-      voice = new SoundFile(parent, "rickroll5.mp3");
-      if (voice != null) talkDuration = voice.duration();
-    } catch (Exception e) {
-      println("語音載入失敗: " + e.getMessage());
+    this.name = name;
+    this.dialogueTree = dialogueTree;
+    this.currentNode = dialogueTree;
+    loadVoice(parent);
+  }
+  
+  void loadVoice(PApplet parent) {
+    if (currentNode.voiceFile != null) {
+      try {
+        voice = new SoundFile(parent, currentNode.voiceFile);
+        talkDuration = voice != null ? voice.duration() : 2.0;
+      } catch (Exception e) {
+        println("語音載入失敗 (" + currentNode.voiceFile + "): " + e.getMessage());
+      }
     }
   }
   
   void startConversation() {
     isTalking = true;
-    currentDialogue = 0;
+    currentNode = dialogueTree;
+    showOptions = false;
+    waitingForPlayerVoice = false;
     talkStartTime = millis() / 1000.0;
     if (voice != null) voice.play();
   }
   
   void nextDialogue() {
-    currentDialogue++;
-    if (currentDialogue < dialogueOptions.length) {
-      talkStartTime = millis() / 1000.0;
-      if (voice != null) voice.play();
+    if (currentNode.options != null) {
+      showOptions = true;
+    } else if (currentNode.outcome != null) {
+      println("結局：" + currentNode.outcome);
+      endConversation();
     } else {
       endConversation();
+    }
+    talkStartTime = millis() / 1000.0;
+    if (voice != null) voice.play();
+  }
+  
+  void chooseOption(int index) {
+    if (showOptions && index >= 0 && index < currentNode.options.length) {
+      DialogueNode nextNode = currentNode.options[index];
+      waitingForPlayerVoice = true;
+      playerVoice = new SoundFile(this, nextNode.voiceFile);
+      talkDuration = playerVoice != null ? playerVoice.duration() : 2.0;
+      talkStartTime = millis() / 1000.0;
+      if (playerVoice != null) playerVoice.play();
+      currentNode = nextNode;
+      showOptions = false;
     }
   }
   
   void endConversation() {
     isTalking = false;
+    showOptions = false;
+    waitingForPlayerVoice = false;
     if (voice != null) voice.stop();
+    if (playerVoice != null) playerVoice.stop();
   }
   
-  void update() {
-    if (isTalking && voice != null && !voice.isPlaying()) {
+  void update(PVector playerPos) {
+    if (isTalking && PVector.dist(playerPos, pos) > 150) {
+      println("與 " + name + " 的對話因距離過遠而結束");
       endConversation();
+    }
+    if (isTalking && canProceed()) {
+      if (waitingForPlayerVoice && playerVoice != null && !playerVoice.isPlaying()) {
+        waitingForPlayerVoice = false;
+        loadVoice(this);
+        nextDialogue();
+      } else if (!waitingForPlayerVoice && voice != null && !voice.isPlaying()) {
+        if (currentNode.options != null) {
+          showOptions = true;
+        }
+      }
     }
   }
   
@@ -456,12 +566,10 @@ class NPC {
   
   void drawNPC() {
     pushStyle();
-    pushMatrix();
     translate(pos.x - 20, pos.y - 100, pos.z - 20);
     fill(255, 200, 200);
     noStroke();
     sphere(30);
-    popMatrix();
     popStyle();
   }
   
@@ -474,26 +582,36 @@ class NPC {
     pg.fill(255, 255, 0);
     pg.textSize(24);
     pg.textAlign(LEFT, TOP);
-    pg.text("同学", 70, pg.height - 180);
+    pg.text(name, 70, pg.height - 180);
     
     pg.fill(255);
     pg.textSize(20);
-    pg.text(dialogueOptions[currentDialogue], 70, pg.height - 140, pg.width - 140, 100);
+    pg.text(currentNode.text, 70, pg.height - 140, pg.width - 140, 100);
     
-    pg.textSize(16);
-    pg.textAlign(RIGHT, BOTTOM);
-    if (canProceed()) {
-      pg.fill(0, 255, 0);
-      pg.text("按 F 繼續", pg.width - 70, pg.height - 60);
+    if (showOptions) {
+      pg.textSize(16);
+      pg.textAlign(LEFT, TOP);
+      for (int i = 0; i < currentNode.options.length; i++) {
+        pg.text((i+1) + ". " + currentNode.options[i].text, 70, pg.height - 100 + i*20);
+      }
+      pg.text("按 1 或 2 選擇", 70, pg.height - 60);
+    } else if (currentNode.outcome != null) {
+      pg.text("結局：" + currentNode.outcome, 70, pg.height - 100);
+      pg.text("按 F 結束", pg.width - 70, pg.height - 60);
     } else {
-      pg.fill(255, 100, 100);
-      pg.text("正在說話...", pg.width - 70, pg.height - 60);
+      pg.textAlign(RIGHT, BOTTOM);
+      if (canProceed()) {
+        pg.fill(0, 255, 0);
+        pg.text("按 F 繼續", pg.width - 70, pg.height - 60);
+      } else {
+        pg.fill(255, 100, 100);
+        pg.text("正在說話...", pg.width - 70, pg.height - 60);
+      }
     }
     pg.popStyle();
   }
 }
 
-// 碰撞檢測相關類別和函數
 class Triangle {
   PVector v0, v1, v2;
   Triangle(PVector a, PVector b, PVector c) {
