@@ -5,24 +5,17 @@ import processing.sound.*;
 import java.util.ArrayList;
 import java.util.List;
 
-// 全域變數
 Player player;
 ArrayList<Chair> chairs;
-NPC classmate;  // 新增 NPC 同學
-float camYaw = 0;
-float camPitch = 0;
+NPC classmate;
+float camYaw = 0, camPitch = 2;
 float sensitivity = 0.003;
 Robot robot;
 PShape chairModel;
 PImage groundTex;
-
-// WASD 鍵狀態
+PGraphics uiLayer;
 boolean wPressed, aPressed, sPressed, dPressed;
-
-// 玩家與椅子互動範圍（以座位中心計算）
 float sitDistance = 80;
-
-// 碰撞檢測額外乘數（>1 擴大範圍）
 float collisionMargin = 2;
 
 void settings() {
@@ -30,54 +23,51 @@ void settings() {
 }
 
 void setup() {
-  textFont(createFont("Arial", 16));
-  groundTex = loadImage("floor.jpg");
+  try {
+    textFont(createFont("Microsoft YaHei", 16));
+  } catch (Exception e) {
+    println("字體載入失敗: " + e.getMessage());
+    textFont(createFont("Arial", 16));
+  }
+  try {
+    groundTex = loadImage("floor.jpg");
+    if (groundTex == null) println("地板紋理未找到！");
+  } catch (Exception e) {
+    println("地板紋理載入失敗: " + e.getMessage());
+  }
   try {
     robot = new Robot();
   } catch (AWTException e) {
     e.printStackTrace();
   }
-  
-  // 載入椅子模型
-  chairModel = loadShape("chair.obj");
-  
-  // 初始化多張椅子，每張椅子都是獨立個體，可調整各自旋轉角度
-  chairs = new ArrayList<Chair>();
-  int numChairs = 10;
-  float spacing = 200;  // 間距
-  for (int i = 0; i < numChairs; i++){
-    // 以 (100, -20, 100) 為起點，沿 x 軸排列
-    PVector pos = new PVector(100 + i * spacing, -20, 100);
-    // 每張椅子獨立旋轉（這裡用隨機角度示範）
-    float rotation = random(-PI, PI);
-    float scale = 100;
-    chairs.add(new Chair(pos, rotation, scale));
+  try {
+    chairModel = loadShape("chair.obj");
+    if (chairModel == null) println("椅子模型未找到！");
+  } catch (Exception e) {
+    println("椅子模型載入失敗: " + e.getMessage());
   }
   
-  // 建立玩家
-  player = new Player(new PVector(0, 0, 0));
+  chairs = new ArrayList<Chair>();
+  for (int i = 0; i < 10; i++) {
+    PVector pos = new PVector(100 + i * 200, -20, 100);
+    float rotation = random(-PI, PI);
+    chairs.add(new Chair(pos, rotation, 100));
+  }
   
-  // 放置同學 NPC：將同學放在第一張椅子的座位中心上
-  if(chairs.size() > 0) {
-    Chair targetChair = chairs.get(0);
-    PVector npcPos = targetChair.getSeatPosition();
-    classmate = new NPC(npcPos, this);
+  player = new Player(new PVector(100, 0, 100));
+  if (chairs.size() > 0) {
+    classmate = new NPC(chairs.get(0).getSeatPosition(), this);
   }
   
   noCursor();
-  camYaw = 0;
-  camPitch = 2;
   centerMouse();
+  uiLayer = createGraphics(width, height, P2D);
 }
 
 void draw() {
   background(135, 206, 235);
   lights();
   
-  // 畫出 XYZ 軸與比例尺
-  drawAxes();
-  
-  // 滑鼠視角控制
   float dx = mouseX - width/2;
   float dy = mouseY - height/2;
   camYaw -= dx * sensitivity;
@@ -85,12 +75,11 @@ void draw() {
   camPitch = constrain(camPitch, -radians(80), radians(80));
   centerMouse();
   
-  // 更新玩家（包含碰撞檢查與滑動碰撞回應）
   player.update();
   
-  // 設定第一人稱攝影機
+  pushMatrix();
   PVector eye = player.pos.copy();
-  eye.y -= 135;  // 相機高度
+  eye.y -= 135;
   PVector center = new PVector(
     eye.x + cos(camPitch) * sin(camYaw),
     eye.y + sin(camPitch),
@@ -98,121 +87,103 @@ void draw() {
   );
   camera(eye.x, eye.y, eye.z, center.x, center.y, center.z, 0, 1, 0);
   
-  // 繪製地面
   drawGround();
-  
-  // 繪製所有椅子
+  drawAxes();
   for (Chair chair : chairs) {
     chair.draw();
   }
-  
-  // 繪製 NPC（同學）
   if (classmate != null) {
-    classmate.draw();
+    classmate.update();
+    classmate.drawNPC();
   }
+  popMatrix();
+  
+  uiLayer.beginDraw();
+  uiLayer.clear();
+  if (classmate != null && classmate.isTalking) {
+    classmate.drawDialogueUI(uiLayer);
+  }
+  uiLayer.endDraw();
+  image(uiLayer, 0, 0);
 }
 
 void drawGround() {
-  pushMatrix();
+  if (groundTex != null) {
+    pushMatrix();
     noStroke();
     textureMode(NORMAL);
     beginShape(QUADS);
-      texture(groundTex);
-      vertex(-2750, 0, -2062.5, 0, 0);
-      vertex(2750, 0, -2062.5, 1, 0);
-      vertex(2750, 0, 2062.5, 1, 1);
-      vertex(-2750, 0, 2062.5, 0, 1);
+    texture(groundTex);
+    vertex(-2750, 0, -2062.5, 0, 0);
+    vertex(2750, 0, -2062.5, 1, 0);
+    vertex(2750, 0, 2062.5, 1, 1);
+    vertex(-2750, 0, 2062.5, 0, 1);
     endShape();
-  popMatrix();
+    popMatrix();
+  }
 }
 
-// drawAxes()：繪製延伸至 ±5000 的 X、Y、Z 軸線與 tick 標尺，且正負端標示 -X, X, -Y, Y, -Z, Z
 void drawAxes() {
   pushStyle();
   pushMatrix();
-    strokeWeight(2);
-    int tickInterval = 500;
-    float tickLength = 40;  
-    float labelOffset = 60; // tick 標籤離 tick 線的偏移量
+  strokeWeight(2);
+  int tickInterval = 500;
+  float tickLength = 40;
+  float labelOffset = 60;
 
-    // X 軸（紅色）：從 -5000 到 5000
-    stroke(255, 0, 0);
-    line(-5000, 0, 0, 5000, 0, 0);
-    // X 軸 tick 標尺
-    for (int x = -5000; x <= 5000; x += tickInterval) {
-      // 將 tick 線繪製在 Y = -200（即較高的位置）
-      line(x, -200 - tickLength/2, 0, x, -200 + tickLength/2, 0);
-      // 標籤位置：在 tick 線上方，Y 取 -200 - tickLength/2 - labelOffset
-      PVector tickPos = new PVector(x, -200 - tickLength/2 - labelOffset, 0);
-      pushMatrix();
-        translate(tickPos.x, tickPos.y, tickPos.z);
-        // 使標籤面向玩家
-        PVector toCam = PVector.sub(player.pos, tickPos);
-        float angle = atan2(toCam.x, toCam.z);
-        rotateY(angle);
-        fill(255);
-        textSize(48);
-        textAlign(CENTER, CENTER);
-        if (x == 5000) {
-          text("X", 0, 0);
-        } else if (x == -5000) {
-          text("-X", 0, 0);
-        } else {
-          text(x, 0, 0);
-        }
-      popMatrix();
-    }
-    
-    // Y 軸（綠色）：我們調整 Y 軸，使正 Y 為上方，故將線從 (0,5000,0) 到 (0,-5000,0)
-    stroke(0, 255, 0);
-    line(0, 5000, 0, 0, -5000, 0);
-    // Y 軸 tick 標尺：迭代 y 從 5000 到 -5000 (間隔 tickInterval)
-    for (int y = 5000; y >= -5000; y -= tickInterval) {
-      // 畫 tick 線：水平方向，X 從 -tickLength/2 到 tickLength/2
-      line(-tickLength/2, y, 0, tickLength/2, y, 0);
-      // 標籤：位置放在 X = tickLength/2 + labelOffset
-      PVector tickPos = new PVector(tickLength/2 + labelOffset, y, 0);
-      pushMatrix();
-        translate(tickPos.x, tickPos.y, tickPos.z);
-        // 顯示標籤時，使用 -y (因為 y 越小越高)
-        fill(255);
-        textSize(48);
-        textAlign(CENTER, CENTER);
-        if (y == 5000) {
-          text("Y", 0, 0);
-        } else if (y == -5000) {
-          text("-Y", 0, 0);
-        } else {
-          text(-y, 0, 0);
-        }
-      popMatrix();
-    }
-    
-    // Z 軸（藍色）：從 -5000 到 5000
-    stroke(0, 0, 255);
-    line(0, 0, -5000, 0, 0, 5000);
-    // Z 軸 tick 標尺：沿 Y = -200 畫
-    for (int z = -5000; z <= 5000; z += tickInterval) {
-      line(0, -200 - tickLength/2, z, 0, -200 + tickLength/2, z);
-      PVector tickPos = new PVector(0, -200 - tickLength/2 - labelOffset, z);
-      pushMatrix();
-        translate(tickPos.x, tickPos.y, tickPos.z);
-        PVector toCam = PVector.sub(player.pos, tickPos);
-        float angle = atan2(toCam.x, toCam.z);
-        rotateY(angle);
-        fill(255);
-        textSize(48);
-        textAlign(CENTER, CENTER);
-        if (z == 5000) {
-          text("Z", 0, 0);
-        } else if (z == -5000) {
-          text("-Z", 0, 0);
-        } else {
-          text(z, 0, 0);
-        }
-      popMatrix();
-    }
-    
+  stroke(255, 0, 0);
+  line(-5000, 0, 0, 5000, 0, 0);
+  for (int x = -5000; x <= 5000; x += tickInterval) {
+    line(x, -200 - tickLength/2, 0, x, -200 + tickLength/2, 0);
+    PVector tickPos = new PVector(x, -200 - tickLength/2 - labelOffset, 0);
+    pushMatrix();
+    translate(tickPos.x, tickPos.y, tickPos.z);
+    PVector toCam = PVector.sub(player.pos, tickPos);
+    float angle = atan2(toCam.x, toCam.z);
+    rotateY(angle);
+    fill(255);
+    textSize(48);
+    textAlign(CENTER, CENTER);
+    if (x == 5000) text("X", 0, 0);
+    else if (x == -5000) text("-X", 0, 0);
+    else text(x, 0, 0);
+    popMatrix();
+  }
+  
+  stroke(0, 255, 0);
+  line(0, 5000, 0, 0, -5000, 0);
+  for (int y = 5000; y >= -5000; y -= tickInterval) {
+    line(-tickLength/2, y, 0, tickLength/2, y, 0);
+    PVector tickPos = new PVector(tickLength/2 + labelOffset, y, 0);
+    pushMatrix();
+    translate(tickPos.x, tickPos.y, tickPos.z);
+    fill(255);
+    textSize(48);
+    textAlign(CENTER, CENTER);
+    if (y == 5000) text("Y", 0, 0);
+    else if (y == -5000) text("-Y", 0, 0);
+    else text(-y, 0, 0);
+    popMatrix();
+  }
+  
+  stroke(0, 0, 255);
+  line(0, 0, -5000, 0, 0, 5000);
+  for (int z = -5000; z <= 5000; z += tickInterval) {
+    line(0, -200 - tickLength/2, z, 0, -200 + tickLength/2, z);
+    PVector tickPos = new PVector(0, -200 - tickLength/2 - labelOffset, z);
+    pushMatrix();
+    translate(tickPos.x, tickPos.y, tickPos.z);
+    PVector toCam = PVector.sub(player.pos, tickPos);
+    float angle = atan2(toCam.x, toCam.z);
+    rotateY(angle);
+    fill(255);
+    textSize(48);
+    textAlign(CENTER, CENTER);
+    if (z == 5000) text("Z", 0, 0);
+    else if (z == -5000) text("-Z", 0, 0);
+    else text(z, 0, 0);
+    popMatrix();
+  }
   popMatrix();
   popStyle();
 }
@@ -223,34 +194,26 @@ void keyPressed() {
   if (key == 's' || key == 'S') sPressed = true;
   if (key == 'd' || key == 'D') dPressed = true;
   
-  // 修改空白鍵：若對話中則先結束對話，再執行跳躍
-  if (key == ' ') {
-    if (classmate != null && classmate.isTalking) {
-      classmate.endConversation();
-    }
-    if (!player.isSeated) player.jump();
-  }
+  if (key == ' ' && !player.isSeated) player.jump();
   
-  // 按 F 鍵：若玩家靠近 NPC（同學）則開始對話或進入下一段對話，
-  // 否則執行坐下/起身的動作
   if (key == 'f' || key == 'F') {
     if (classmate != null && PVector.dist(player.pos, classmate.pos) < 150) {
       if (!classmate.isTalking) {
+        println("開始對話");
         classmate.startConversation();
-      } else {
+      } else if (classmate.canProceed()) {
+        println("下一句對話");
         classmate.nextDialogue();
-      }
-    } else {
-      if (player.isSeated) {
-        player.exitChair();
       } else {
-        // 以椅子座位中心作為判斷點，讓前面或左右皆可互動
-        for (Chair chair : chairs) {
-          float d = PVector.dist(player.pos, chair.getSeatPosition());
-          if (d < sitDistance) {
-            player.sitOnChair(chair);
-            break;
-          }
+        println("等待 NPC 說完...");
+      }
+    } else if (player.isSeated) {
+      player.exitChair();
+    } else {
+      for (Chair chair : chairs) {
+        if (PVector.dist(player.pos, chair.getSeatPosition()) < sitDistance) {
+          player.sitOnChair(chair);
+          break;
         }
       }
     }
@@ -265,22 +228,14 @@ void keyReleased() {
 }
 
 void centerMouse() {
-  if (robot != null) {
-    robot.mouseMove(displayWidth/2, displayHeight/2);
-  }
+  if (robot != null) robot.mouseMove(displayWidth/2, displayHeight/2);
 }
 
-//---------------------------------------------------
-// Player 類別（與碰撞處理保持不變）
-//---------------------------------------------------
 class Player {
   PVector pos, vel;
   float speed = 5;
-  boolean onGround;
-  boolean isSeated = false;
-  // 膠囊參數
-  float capsuleHeight = 80;
-  float capsuleRadius = 30;
+  boolean onGround, isSeated = false;
+  float capsuleHeight = 80, capsuleRadius = 30;
   
   Player(PVector startPos) {
     pos = startPos.copy();
@@ -291,8 +246,7 @@ class Player {
   void update() {
     if (isSeated) return;
     
-    // 基本移動計算
-    PVector move = new PVector();
+    PVector move = new PVector(0, 0, 0);
     if (wPressed) move.add(new PVector(sin(camYaw), 0, cos(camYaw)));
     if (sPressed) move.sub(new PVector(sin(camYaw), 0, cos(camYaw)));
     if (aPressed) move.add(new PVector(sin(camYaw + HALF_PI), 0, cos(camYaw + HALF_PI)));
@@ -307,20 +261,16 @@ class Player {
       vel.z *= 0.9;
     }
     
-    // 加上重力
     vel.y += 0.5;
     
-    // 根據本幀移動距離決定子步進數量，並限制最大子步進數
     float displacement = vel.mag();
     int subSteps = max(1, int(ceil(displacement / 5.0)));
     subSteps = min(subSteps, 10);
     PVector subVel = PVector.div(vel, subSteps);
     
-    // 逐步嘗試移動
     for (int i = 0; i < subSteps; i++) {
       pos.add(subVel);
       
-      // 地面碰撞檢查
       if (pos.y > 0) {
         pos.y = 0;
         vel.y = 0;
@@ -329,7 +279,6 @@ class Player {
         onGround = false;
       }
       
-      // 設定膠囊檢查參數
       float effectiveRadius = capsuleRadius * collisionMargin;
       PVector capTop = PVector.add(pos, new PVector(0, capsuleHeight/2, 0));
       PVector capBottom = PVector.sub(pos, new PVector(0, capsuleHeight/2, 0));
@@ -337,14 +286,13 @@ class Player {
       float maxPen = 0;
       PVector collisionNormal = new PVector(0, 0, 0);
       
-      // 檢查靠近的椅子以降低計算量
+      // 檢查與椅子的碰撞
       for (Chair chair : chairs) {
         if (PVector.dist(pos, chair.pos) > 300) continue;
         if (chair.bvh != null) {
           List<Triangle> candidates = new ArrayList<Triangle>();
           chair.bvh.collectPotentialCollisions(pos, effectiveRadius, candidates);
           for (Triangle tri : candidates) {
-            // 取樣法取得膠囊上最靠近三角形的點
             PVector samplePoint = closestPointOnCapsuleSegmentToTriangle(capTop, capBottom, tri);
             if (samplePoint == null) continue;
             PVector cp = closestPointOnTriangle(samplePoint, tri);
@@ -361,7 +309,22 @@ class Player {
         }
       }
       
-      // 若檢測到穿透，則將玩家調整出物體，並移除速度中進入物體的分量
+      // 檢查與 NPC 的碰撞
+      if (classmate != null) {
+        float npcRadius = 30; // NPC 的球形碰撞體半徑
+        float totalRadius = effectiveRadius + npcRadius;
+        PVector npcCenter = PVector.add(classmate.pos, new PVector(0, -50, 0)); // NPC 中心點
+        float distToNPC = PVector.dist(pos, npcCenter);
+        if (distToNPC < totalRadius) {
+          float penetration = totalRadius - distToNPC;
+          if (penetration > maxPen) {
+            maxPen = penetration;
+            collisionNormal = PVector.sub(pos, npcCenter).normalize();
+          }
+        }
+      }
+      
+      // 碰撞響應
       if (maxPen > 0.1) {
         pos.add(PVector.mult(collisionNormal, maxPen));
         float vn = vel.dot(collisionNormal);
@@ -379,7 +342,6 @@ class Player {
     }
   }
   
-  // 坐下時直接使用椅子提供的坐位位置，並同步調整視角（camYaw）以對齊椅子面向
   void sitOnChair(Chair chair) {
     pos.set(chair.getSeatPosition());
     vel.set(0, 0, 0);
@@ -393,56 +355,35 @@ class Player {
   }
 }
 
-//---------------------------------------------------
-// Chair 類別：新增互動點與座位偏移，並計算面向角度
-//---------------------------------------------------
 class Chair {
   PVector pos;
-  float rotation; // Y 軸旋轉
-  float scale;
-  float baseRotation = PI; // 模型初始需要旋轉的角度
+  float rotation, scale;
+  float baseRotation = PI;
+  PVector seatOffsetLocal = new PVector(0, 40, 80);
   BVHNode bvh;
-  // 互動點偏移（本地座標）：可用來微調互動區域
-  PVector interactionOffsetLocal;
-  // 座位偏移（本地座標）：代表模型內的座位位置
-  PVector seatOffsetLocal;
   
   Chair(PVector pos, float rotation, float scale) {
     this.pos = pos.copy();
     this.rotation = rotation;
     this.scale = scale;
     
-    // 設定互動偏移：例如 (-60, 0, 0) 表示互動點相對於模型原點向左偏 60 單位（可依需求調整）
-    interactionOffsetLocal = new PVector(-60, 0, 0);
-    // 設定座位偏移：例如 (0, 0, 80) 表示座位在模型局部 Z 正方向偏移 80 單位，再加上高度 40 單位
-    seatOffsetLocal = new PVector(0, 40, 80);
-    
-    // 建立轉換矩陣
-    PMatrix3D mat = new PMatrix3D();
-    mat.translate(pos.x, pos.y, pos.z);
-    mat.scale(scale);
-    mat.rotateX(baseRotation);
-    mat.rotateY(rotation);
-    // 從模型中提取三角形建立 BVH
-    List<Triangle> tris = extractMeshTriangles(chairModel, mat);
-    bvh = new BVHNode(tris);
+    if (chairModel != null) {
+      PMatrix3D mat = new PMatrix3D();
+      mat.translate(pos.x, pos.y, pos.z);
+      mat.scale(scale);
+      mat.rotateX(baseRotation);
+      mat.rotateY(rotation);
+      List<Triangle> tris = extractMeshTriangles(chairModel, mat);
+      bvh = new BVHNode(tris);
+    }
   }
   
-  // 取得互動點：將本地偏移依椅子旋轉後加到椅子位置上
-  PVector getInteractionPoint() {
-    float offsetX = interactionOffsetLocal.x * cos(rotation) - interactionOffsetLocal.z * sin(rotation);
-    float offsetZ = interactionOffsetLocal.x * sin(rotation) + interactionOffsetLocal.z * cos(rotation);
-    return PVector.add(pos, new PVector(offsetX, interactionOffsetLocal.y, offsetZ));
-  }
-  
-  // 取得坐位位置：將座位偏移依照椅子旋轉後加到椅子位置上
   PVector getSeatPosition() {
     float offsetX = seatOffsetLocal.x * cos(rotation) - seatOffsetLocal.z * sin(rotation);
     float offsetZ = seatOffsetLocal.x * sin(rotation) + seatOffsetLocal.z * cos(rotation);
     return PVector.add(pos, new PVector(offsetX, seatOffsetLocal.y, offsetZ));
   }
   
-  // 取得椅子面向角度：根據座位偏移計算 XZ 平面的角度
   float getFacingAngle() {
     float offsetX = seatOffsetLocal.x * cos(rotation) - seatOffsetLocal.z * sin(rotation);
     float offsetZ = seatOffsetLocal.x * sin(rotation) + seatOffsetLocal.z * cos(rotation);
@@ -450,57 +391,49 @@ class Chair {
   }
   
   void draw() {
-    pushMatrix();
+    if (chairModel != null) {
+      pushMatrix();
       translate(pos.x, pos.y, pos.z);
       scale(scale);
       rotateX(baseRotation);
       rotateY(rotation);
       shape(chairModel);
-    popMatrix();
+      popMatrix();
+    }
   }
 }
 
-//---------------------------------------------------
-// NPC 同學類別：放置在椅子上，並可進行對話
-//---------------------------------------------------
 class NPC {
   PVector pos;
   boolean isTalking = false;
-  String[] dialogueOptions;
+  String[] dialogueOptions = {"哈囉，你的天如何？", "今天天氣非常好！", "師大圖書館我最喜歡！"};
   int currentDialogue = 0;
   SoundFile voice;
+  float talkStartTime = 0;
+  float talkDuration = 2.0;
   
   NPC(PVector pos, PApplet parent) {
     this.pos = pos.copy();
-    // 範例對話內容
-    dialogueOptions = new String[] {
-      "哈囉，你好嗎？",
-      "今天天氣真好呢！",
-      "下次一起去圖書館吧！"
-    };
-    // 請將 "npc_voice.wav" 放在 data 資料夾中
-    voice = new SoundFile(parent, "npc_voice.wav");
-  }
-  
-  // 開始對話
-  void startConversation() {
-    isTalking = true;
-    currentDialogue = 0;
-    playVoice();
-  }
-  
-  // 撥放語音
-  void playVoice() {
-    if (voice != null) {
-      voice.play();
+    try {
+      voice = new SoundFile(parent, "rickroll5.mp3");
+      if (voice != null) talkDuration = voice.duration();
+    } catch (Exception e) {
+      println("語音載入失敗: " + e.getMessage());
     }
   }
   
-  // 進入下一段對話，若對話結束則關閉對話介面
+  void startConversation() {
+    isTalking = true;
+    currentDialogue = 0;
+    talkStartTime = millis() / 1000.0;
+    if (voice != null) voice.play();
+  }
+  
   void nextDialogue() {
     currentDialogue++;
     if (currentDialogue < dialogueOptions.length) {
-      playVoice();
+      talkStartTime = millis() / 1000.0;
+      if (voice != null) voice.play();
     } else {
       endConversation();
     }
@@ -508,45 +441,63 @@ class NPC {
   
   void endConversation() {
     isTalking = false;
+    if (voice != null) voice.stop();
   }
   
-  // 畫出 NPC 與對話 UI
-  void draw() {
+  void update() {
+    if (isTalking && voice != null && !voice.isPlaying()) {
+      endConversation();
+    }
+  }
+  
+  boolean canProceed() {
+    return (millis() / 1000.0 - talkStartTime >= talkDuration);
+  }
+  
+  void drawNPC() {
     pushStyle();
-      // 畫出 NPC 代表（用球體表示），將球放置在椅子上，所以使用 pos.y + 30
-      pushMatrix();
-        translate(pos.x - 20, pos.y - 100, pos.z -20);
-        fill(255, 200, 200);
-        noStroke();
-        sphere(30);
-      popMatrix();
-      
-      // 若正在對話，畫出對話介面
-      if (isTalking) {
-        drawDialogueUI();
-      }
+    pushMatrix();
+    translate(pos.x - 20, pos.y - 100, pos.z - 20);
+    fill(255, 200, 200);
+    noStroke();
+    sphere(30);
+    popMatrix();
     popStyle();
   }
   
-  void drawDialogueUI() {
-    fill(0, 150);
-    rect(0, height - 100, width, 100);
-    fill(255);
-    textSize(20);
-    textAlign(LEFT, CENTER);
-    text(dialogueOptions[currentDialogue], 20, height - 50);
+  void drawDialogueUI(PGraphics pg) {
+    pg.pushStyle();
+    pg.textFont(createFont("Microsoft YaHei", 16));
+    pg.fill(0, 200);
+    pg.rect(50, pg.height - 200, pg.width - 100, 150, 20);
+    
+    pg.fill(255, 255, 0);
+    pg.textSize(24);
+    pg.textAlign(LEFT, TOP);
+    pg.text("同学", 70, pg.height - 180);
+    
+    pg.fill(255);
+    pg.textSize(20);
+    pg.text(dialogueOptions[currentDialogue], 70, pg.height - 140, pg.width - 140, 100);
+    
+    pg.textSize(16);
+    pg.textAlign(RIGHT, BOTTOM);
+    if (canProceed()) {
+      pg.fill(0, 255, 0);
+      pg.text("按 F 繼續", pg.width - 70, pg.height - 60);
+    } else {
+      pg.fill(255, 100, 100);
+      pg.text("正在說話...", pg.width - 70, pg.height - 60);
+    }
+    pg.popStyle();
   }
 }
 
-//---------------------------------------------------
-// Triangle、BVHNode 與輔助函式（保持原有邏輯）
-//---------------------------------------------------
+// 碰撞檢測相關類別和函數
 class Triangle {
   PVector v0, v1, v2;
   Triangle(PVector a, PVector b, PVector c) {
-    v0 = a; 
-    v1 = b; 
-    v2 = c;
+    v0 = a; v1 = b; v2 = c;
   }
   
   void getMinMax(PVector outMin, PVector outMax) {
@@ -594,18 +545,13 @@ class BVHNode {
     }
     
     PVector size = PVector.sub(maxBound, minBound);
-    int axis;
-    if (size.x > size.y && size.x > size.z) axis = 0;
-    else if (size.y > size.z) axis = 1;
-    else axis = 2;
+    int axis = (size.x > size.y && size.x > size.z) ? 0 : (size.y > size.z) ? 1 : 2;
     
     float midVal = (getAxisValue(minBound, axis) + getAxisValue(maxBound, axis)) * 0.5;
     List<Triangle> leftList = new ArrayList<Triangle>();
     List<Triangle> rightList = new ArrayList<Triangle>();
     for (Triangle t : tris) {
-      float cx = ( getAxisValue(t.v0, axis) +
-                   getAxisValue(t.v1, axis) +
-                   getAxisValue(t.v2, axis) ) / 3.0;
+      float cx = (getAxisValue(t.v0, axis) + getAxisValue(t.v1, axis) + getAxisValue(t.v2, axis)) / 3.0;
       if (cx < midVal) leftList.add(t);
       else rightList.add(t);
     }
@@ -725,7 +671,7 @@ PVector closestPointOnSegment(PVector p, PVector a, PVector b) {
 }
 
 PVector closestPointOnCapsuleSegmentToTriangle(PVector A, PVector B, Triangle tri) {
-  int steps = 3;  // 降低取樣點數
+  int steps = 3;
   float bestDist = Float.MAX_VALUE;
   PVector bestPoint = null;
   for (int i = 0; i <= steps; i++) {
@@ -738,8 +684,6 @@ PVector closestPointOnCapsuleSegmentToTriangle(PVector A, PVector B, Triangle tr
       bestPoint = candidate.copy();
     }
   }
-  if (bestPoint == null) {
-    return A.copy();
-  }
+  if (bestPoint == null) return A.copy();
   return bestPoint;
 }

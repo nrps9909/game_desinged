@@ -1,0 +1,58 @@
+{
+    "npcs": [
+      {
+        "name": "小明",
+        "dialogues": [
+          {
+            "text": "哈囉，你今天過得如何？",
+            "voice": "xiaoming_intro.mp3",
+            "options": [
+              {
+                "text": "要不要一起去圖書館？",
+                "voice": "xiaoming_choice.mp3",
+                "options": [
+                  {
+                    "text": "好啊，我們一起去吧！",
+                    "voice": "xiaoming_friendship.mp3",
+                    "outcome": "友誼結局"
+                  },
+                  {
+                    "text": "不了，我有其他計畫。",
+                    "voice": "xiaoming_alone.mp3",
+                    "outcome": "疏遠結局"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "老師",
+        "dialogues": [
+          {
+            "text": "今天課堂內容如何？",
+            "voice": "teacher_intro.mp3",
+            "options": [
+              {
+                "text": "你覺得課程難嗎？",
+                "voice": "teacher_choice.mp3",
+                "options": [
+                  {
+                    "text": "是的，我會努力學習！",
+                    "voice": "teacher_good.mp3",
+                    "outcome": "好學生結局"
+                  },
+                  {
+                    "text": "不，我覺得太難了。",
+                    "voice": "teacher_giveup.mp3",
+                    "outcome": "放棄結局"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
